@@ -34,11 +34,12 @@ pub fn wasm_csp() -> String {
 /// - It changes the first `script-src` only. A browser ignores the others.
 /// - With no `script-src`, it adds one with the `default-src` sources.
 /// - With neither, it changes nothing: wasm is already allowed.
-/// - It changes nothing when `'unsafe-eval'` or the token is there.
+/// - It adds nothing when `'unsafe-eval'` or the token is there.
 /// - It removes `'none'`, because `'none'` cannot stand next to a source.
 ///
-/// It is idempotent. It keeps the text of the other directives. It drops
-/// empty directives and writes `"; "` between directives.
+/// It always writes `"; "` between directives and drops empty directives.
+/// It keeps the text of the other directives. A second call does not
+/// change the result.
 ///
 /// ```rust
 /// use autumn_plugin_leptos::add_wasm_unsafe_eval;
@@ -106,8 +107,8 @@ fn with_token(directive: &str) -> String {
 /// A [`ConfigLoader`] that adds [`WASM_UNSAFE_EVAL`] to the loaded CSP.
 ///
 /// It runs the inner loader first. Then it calls [`add_wasm_unsafe_eval`]
-/// on `security.headers.content_security_policy`. Thus `autumn.toml` and
-/// `AUTUMN_*` variables still set the policy.
+/// on `security.headers.content_security_policy`. Because of this,
+/// `autumn.toml` and `AUTUMN_*` variables still set the policy.
 ///
 /// ```rust,no_run
 /// use autumn_plugin_leptos::WasmCspLoader;
@@ -123,6 +124,13 @@ fn with_token(directive: &str) -> String {
 /// The default inner loader is Autumn's [`TomlEnvConfigLoader`]. An app
 /// has one config loader. Wrap your own loader with
 /// [`WasmCspLoader::new`].
+///
+/// # Errors
+///
+/// `load` returns [`ConfigError::Validation`] when
+/// `security.headers.csp_nonce.enabled` is `true`. Autumn adds nonces only
+/// to its default policy. A changed policy has no nonces, so the nonces of
+/// the app stop working, and `style-src` goes back to `'unsafe-inline'`.
 #[derive(Debug, Clone)]
 pub struct WasmCspLoader<L = TomlEnvConfigLoader> {
     inner: L,
@@ -144,7 +152,16 @@ impl<L> WasmCspLoader<L> {
 impl<L: ConfigLoader> ConfigLoader for WasmCspLoader<L> {
     async fn load(&self) -> Result<AutumnConfig, ConfigError> {
         let mut config = self.inner.load().await?;
-        let policy = &mut config.security.headers.content_security_policy;
+        let headers = &mut config.security.headers;
+        if headers.csp_nonce.enabled {
+            return Err(ConfigError::Validation(
+                "WasmCspLoader cannot change the CSP when security.headers.csp_nonce.enabled \
+                 is true: Autumn then sends the policy as it is, with no nonce. Turn off \
+                 csp_nonce, or set a policy with 'wasm-unsafe-eval' and your own nonce handling"
+                    .to_owned(),
+            ));
+        }
+        let policy = &mut headers.content_security_policy;
         *policy = add_wasm_unsafe_eval(policy);
         Ok(config)
     }

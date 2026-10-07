@@ -21,5 +21,8 @@ First release. Targets `autumn-web` 0.8 and Leptos 0.8.
   ABI, mounts and unmounts islands with htmx swaps, sends props updates
   and puts fallbacks back after a panic.
 - `autumn-plugin-leptos-client`: `register` with reactive props, ABI
-  version 1 and a panic hook.
+  version 1 and a panic hook with a private loader callback.
+- The loader accepts only same-origin `modulepreload` bundle links with
+  SRI hashes, keeps a fallback copy for htmx history, and gives `error`
+  to an island whose name no loaded bundle registers.
 - Demo app, demo wasm crate and its committed bundle.

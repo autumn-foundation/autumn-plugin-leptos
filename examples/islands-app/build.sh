@@ -16,6 +16,8 @@ repo="$(cd ../.. && pwd)"
 
 source_hash() {
   (cd "$repo" && LC_ALL=C cat \
+    Cargo.toml \
+    examples/islands-app/build.sh \
     examples/islands-app/Cargo.toml \
     examples/islands-app/Cargo.lock \
     examples/islands-app/rust-toolchain.toml \
@@ -35,7 +37,7 @@ fi
 
 cargo_home="${CARGO_HOME:-$HOME/.cargo}"
 # Remove machine paths from panic messages.
-RUSTFLAGS="--remap-path-prefix=$cargo_home=/cargo --remap-path-prefix=$repo=/repo" \
+RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$cargo_home=/cargo --remap-path-prefix=$repo=/repo" \
   CARGO_TARGET_DIR="$here/target" \
   cargo build --locked --release --target wasm32-unknown-unknown
 wasm-bindgen --target web --no-typescript --out-dir ../islands \

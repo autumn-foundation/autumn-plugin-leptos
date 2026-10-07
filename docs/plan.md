@@ -40,8 +40,8 @@ Ideas, not filtered:
 3. A client crate (`autumn-plugin-leptos-client`). The app calls
    `register("Counter", |props: Signal<CounterProps>| view! { … })`.
 4. The client crate exports a small, versioned ABI through wasm-bindgen:
-   `autumn_leptos_abi`, `autumn_leptos_start`, `autumn_leptos_mount` and a
-   `LeptosIsland` handle with `update` and `unmount`. wasm-bindgen exports
+   `autumn_leptos_abi`, `autumn_leptos_start`, `autumn_leptos_mount` and an
+   `AutumnLeptosIsland` handle with `update` and `unmount`. wasm-bindgen exports
    from a dependency appear in the app's glue module. The app writes no
    JavaScript.
 5. The loader imports the glue module with `import()`. It calls `init`
@@ -90,13 +90,18 @@ Question: "How can this plugin fail its users?" Each answer gives a control.
 | A morph moves an island (remove, then add). The state is lost. | The loader unmounts only when the element is not connected. |
 | A re-scan mounts one island two times. | One record for each element (`WeakMap`). |
 | Props inject HTML or script. | Props go only in an attribute. Maud escapes it. Rust `serde` reads them into a typed struct. The loader uses no `innerHTML` and no `eval`. |
-| The CSP blocks wasm. | The CSP helpers and `WasmCspLoader` add `'wasm-unsafe-eval'` only. The fallbacks stay when the CSP blocks wasm. |
+| The CSP blocks wasm. | The CSP helpers and `WasmCspLoader` add `'wasm-unsafe-eval'` only. The fallbacks stay when the CSP blocks wasm. `WasmCspLoader` refuses nonce mode, because a changed policy gets no nonces. |
 | The glue and the committed demo bundle drift from their source. | `build.sh` writes a hash of the sources. CI checks it, builds the bundle and runs the browser tests with the new bundle. Byte equality is not possible: cargo puts the checkout path in symbol hashes. |
 | A browser or a proxy changes the wasm bytes. | The loader fetches the `.wasm` with its SRI hash. The glue gets SRI through `modulepreload`. |
 | A browser keeps old bytes after an upgrade. | Hashed URLs from `PluginAssets`. |
 | The glue and the wasm come from different builds. | `leptos_bundle` pairs `x.js` with `x_bg.wasm` from one bundle. The demo build pins `wasm-bindgen-cli` to the lockfile version. |
 | The client crate and the loader disagree on the ABI. | `autumn_leptos_abi()` returns a version. The loader refuses an unknown version. |
-| A Rust panic stops the wasm instance. Islands freeze. | The panic hook sends `autumn:leptos:panic`. The loader marks the bundle as crashed and puts the fallbacks back. Other bundles keep working. |
+| A Rust panic stops the wasm instance. Islands freeze. | The panic hook calls a private loader callback. The loader marks the bundle as crashed and puts the fallbacks back. Other bundles keep working. |
+| Page code fakes a panic and crashes a bundle. | The panic signal is a callback that only the bundle has, not a DOM event. |
+| User HTML adds a bundle link, and the loader imports it as code. | The loader accepts only same-origin `modulepreload` links with SRI hashes, outside `[data-leptos-ignore]` and islands. |
+| The glue frees a lost handle of a crashed bundle with a call into wasm. | The loader keeps the handles of a crashed bundle alive. After a panic, a dropped client handle leaks its Leptos state. |
+| An htmx history snapshot has Leptos output and no fallback. | The loader keeps a fallback copy in `<template data-leptos-fallback>`. |
+| A failed bundle leaves islands `pending` forever. | When no bundle loads, an unknown name gets `error`. A later bundle can still mount it. |
 | Bad props JSON stops all islands. | Rust returns an error for that island only. No panic. |
 | A props change resets the component state. | The loader calls `update` on the same handle. It sets the props signal. |
 | Two bundles register one name. | The first registration stays. The loader writes a console error. |
@@ -153,8 +158,9 @@ The loader keeps one record for each island element.
 | From | Event | To |
 | --- | --- | --- |
 | (none) | scan finds a connected element, strategy `idle`/`visible` | `waiting` |
-| (none) or `waiting` | trigger fires, name not registered yet | `pending` |
-| `pending` | a bundle registers the name | `mounted` |
+| (none) or `waiting` | trigger fires, name not registered, a bundle loads | `pending` |
+| (none), `waiting` or `pending` | name not registered, no bundle loads | `error` (fallback stays) |
+| `pending`, or `error` for an unknown name | a bundle registers the name | `mounted` |
 | (none) or `waiting` | trigger fires, name registered | `mounted` |
 | `waiting` | `data-leptos-mount` changes | start again |
 | `mounted` | `data-leptos-props` changes | `mounted` (same handle, new props) |
@@ -168,8 +174,8 @@ The loader keeps one record for each island element.
 
 "Start again" means: tear down (fallback back), then scan the element.
 
-Bundle states: `loading` → `ready`, `failed` or `crashed`. Only `ready`
-bundles mount islands.
+Bundle states: `loading` → `ready` or `failed`; `ready` → `crashed`.
+Only `ready` bundles mount islands. A refused link gets no bundle.
 
 Invariants:
 
@@ -179,7 +185,7 @@ Invariants:
   no live record.
 - A record in `pending`, or in `error` with no handle, shows the fallback.
 - A torn-down element has its fallback and no `data-leptos-state`.
-- A crashed bundle has no live handle.
+- A crashed bundle has no live handle. The loader makes no call into it.
 
 ## 7. Decisions
 
@@ -201,7 +207,7 @@ See [ADR 0001](adr/0001-leptos-islands.md).
 | AC10 | Bad props or a failed mount affect one island only. The island gets `data-leptos-state="error"` and sends `autumn:leptos:error`. The fallback stays. Bad props on a mounted island keep the last good render. An unknown name stays `pending` with its fallback. A bundle that cannot load (import error, SRI mismatch, ABI mismatch, CSP block) writes a console error and sends `autumn:leptos:error` on `document`. Other bundles keep working. |
 | AC11 | A Rust panic affects its own bundle only. Each island of that bundle gets its fallback back, `error` state and an `autumn:leptos:error` event. |
 | AC12 | `data-leptos-ignore` and nested islands do not mount. One element mounts one time only. A second loader copy does nothing. The loader uses no `eval`, `Function`, `innerHTML` or `document.write`. It resists DOM clobbering. |
-| AC13 | `wasm_csp()` gives the Autumn default CSP plus `'wasm-unsafe-eval'` in `script-src`. `add_wasm_unsafe_eval(policy)` adds the token to any policy. It is idempotent and keeps the other directives. `WasmCspLoader` adds the token to the policy that a `ConfigLoader` loads. |
+| AC13 | `wasm_csp()` gives the Autumn default CSP plus `'wasm-unsafe-eval'` in `script-src`. `add_wasm_unsafe_eval(policy)` adds the token to any policy. A second call does not change the result. It keeps the other directives. `WasmCspLoader` adds the token to the policy that a `ConfigLoader` loads. |
 | AC14 | With the `ssr` feature, `Island::fallback_view(…)` renders a Leptos view on the server as the fallback. |
 | AC15 | `PropsUpdate` sends new props in an `HX-Trigger` header. The header is visible ASCII. It merges with other trigger events and can use `HX-Trigger-After-Settle`. The loader applies the `autumn:leptos:props` event. |
 | AC16 | The plugin passes `autumn_web::plugin_conformance` and declares a `PluginContract` for `autumn-web` 0.8. A second install is harmless. |
@@ -209,7 +215,46 @@ See [ADR 0001](adr/0001-leptos-islands.md).
 | AC18 | `cargo fmt`, `cargo clippy` (pedantic, nursery, `-D warnings`), `cargo test`, doc tests and browser tests pass. Rust line coverage is 85% or more. |
 | AC19 | README, CHANGELOG, ADR, CLAUDE.md, doc comments and a CI workflow exist. Text uses ASD-STE100. |
 
-## 9. Not in scope
+## 9. Review round 1
+
+Four review agents checked the work: loader runtime, security, Rust and
+Leptos API, and tests with docs and CI. The fixes:
+
+- **Panics.** The panic signal is now a private callback, not a DOM
+  event, so page code cannot crash a bundle. The first `register`
+  installs the hook, so a panic before `start` marks the bundle as
+  failed. After a panic, the client refuses mounts and updates and leaks
+  dropped handles. The loader keeps crashed handles alive (the glue frees
+  a lost handle with a call into wasm). `mount` and `update` check for a
+  crash during their own call.
+- **Security.** The loader accepts only same-origin `modulepreload`
+  bundle links with SRI hashes, outside ignored regions and islands.
+  `leptos_bundle` preloads snippets with SRI. `Island::attr` refuses
+  `hx-on*`. `WasmCspLoader` refuses Autumn nonce mode.
+- **Leptos.** The client crate turns on `leptos/csr`. Without it, effects
+  do not run. `()` props read `{}`.
+- **Lifecycle.** The loader keeps a fallback copy for htmx history. An
+  unknown name gets `error` when no bundle loads. An `update` event never
+  follows a later error. `Island::attr` matches names in any case.
+- **Tests.** New browser tests cover the attribute branches, old browsers,
+  glue SRI, refused links, `after_settle`, spoofed panics and crashes
+  during calls. Fixed sleeps became sentinels. The browser tests use
+  `WasmCspLoader`. The client tests check the signal value.
+- **CI and docs.** CI lints the wasm crates on `wasm32`. The bundle hash
+  includes `build.sh` and the root `Cargo.toml`. The README setup is
+  complete. ASD-STE100 rewrites.
+
+Not changed, with the reason:
+
+- Two bundles that register one name: the bundle that loads first gets
+  the name. A fix by document order adds much code for an app bug. The
+  README tells apps to register a name in one bundle only.
+- Server constants for the loader event names: more API for little gain.
+  The README lists the names.
+- A crashed bundle can still run Leptos timers and listeners. Wasm has no
+  way to stop them from outside. The docs say this.
+
+## 10. Not in scope
 
 - Hydration of server HTML (see ADR 0001).
 - An `autumn generate leptos` command. It needs a change in `autumn-cli`.

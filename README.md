@@ -5,8 +5,8 @@ Leptos islands for [Autumn](https://github.com/autumn-foundation/autumn)
 htmx pages.
 
 - The plugin serves a small loader and your wasm bundle through the Autumn
-  `plugin_assets` API: hashed URLs, `immutable` cache, SRI. The loader
-  also checks the SRI hash of the `.wasm` file.
+  `plugin_assets` API: hashed URLs, `immutable` cache, SRI. The browser
+  checks the SRI hash of the glue module and of the `.wasm` file.
 - The client crate registers your components. You write no JavaScript.
 - Props are typed `serde` structs. The component gets them as a
   `Signal<P>`. New props from the server keep the component state.
@@ -19,20 +19,29 @@ htmx pages.
 
 ## Install
 
+The server crate:
+
 ```toml
-# The server crate.
 [dependencies]
 autumn-plugin-leptos = { version = "0.1", features = ["ssr"] }
+autumn-web = "0.8"
+leptos = "0.8"          # for `fallback_view` and the shared components
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+```
 
-# The wasm crate (`crate-type = ["cdylib"]`).
+The wasm crate (`[lib] crate-type = ["cdylib"]`):
+
+```toml
 [dependencies]
 autumn-plugin-leptos-client = "0.1"
 leptos = { version = "0.8", features = ["csr"] }
+serde = { version = "1", features = ["derive"] }
 wasm-bindgen = "=0.2.129"
 ```
 
 Install the wasm tools one time. The `wasm-bindgen-cli` version must be
-the `wasm-bindgen` version in your `Cargo.lock`:
+the `wasm-bindgen` version in the `Cargo.lock` of the wasm crate:
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -47,10 +56,10 @@ cargo install wasm-bindgen-cli --version 0.2.129
 // islands/src/lib.rs
 use autumn_plugin_leptos_client::register;
 use leptos::prelude::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use wasm_bindgen::prelude::*;
 
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct CounterData {
     pub start: i32,
     pub label: String,
@@ -70,9 +79,12 @@ pub fn start() {
 }
 ```
 
-- Without `data-leptos-props`, the props are `{}`.
+- Without `data-leptos-props`, the props are `{}`. For a component with
+  no props, use `()` or an empty struct as the props type.
 - `#[component] fn Counter` makes a `CounterProps` type. Do not give your
   props struct the same name.
+- Register a name in one bundle only. When two bundles register one name,
+  the bundle that loads first gets the name.
 
 ### 2. Build the bundle
 
@@ -91,7 +103,7 @@ complete script.
 
 ```rust,ignore
 use autumn_plugin_leptos::{Island, LeptosPlugin, WasmCspLoader, leptos_bundle, leptos_script};
-use autumn_web::assets::PluginAssets;
+use autumn_web::assets::{PluginAssets, asset_url};
 use autumn_web::prelude::*;
 
 static ISLANDS: PluginAssets = PluginAssets::from_files(
@@ -105,11 +117,16 @@ static ISLANDS: PluginAssets = PluginAssets::from_files(
 #[get("/")]
 async fn index() -> AutumnResult<Markup> {
     let counter = Island::new("Counter")
+        .id("counter")
         .props(&serde_json::json!({ "start": 3, "label": "Hits" }))?
         .fallback(html! { p { "Hits: 3" } });
     Ok(html! {
         html {
-            head { (leptos_script()) (leptos_bundle(&ISLANDS)) }
+            head {
+                script src=(asset_url("js/htmx.min.js")) defer {}
+                (leptos_script())
+                (leptos_bundle(&ISLANDS))
+            }
             body { (counter) }
         }
     })
@@ -128,10 +145,11 @@ async fn main() {
 
 - Give the same bundle to `LeptosPlugin::bundle` and `leptos_bundle`.
 - `leptos_bundle` renders a `<link rel="modulepreload">` for the glue and
-  a `<link rel="preload">` for the wasm. The loader imports the glue.
+  each snippet, and a `<link rel="preload">` for the wasm. The loader
+  imports the glue.
 - `Island::inline()` renders a `<span>`. `Island::attr` adds attributes
   such as `role` or `aria-label`. It refuses `id`, `class`,
-  `data-leptos-*` and `on*`.
+  `data-leptos-*`, `on*`, `hx-on*` and `data-hx-on*`.
 - A bundle with no `x.js` + `x_bg.wasm` pair, or with the namespace
   `leptos`, stops the app at start-up.
 
@@ -148,8 +166,13 @@ default CSP does not have it. Use one of these:
   `security.headers.content_security_policy`.
 - `add_wasm_unsafe_eval(policy)` adds the token to any policy.
 
-An explicit policy turns off Autumn nonce injection. Without the token,
-the islands keep their fallback.
+Autumn adds nonces (`security.headers.csp_nonce`) only to its default
+policy. A changed policy has no nonces. Because of this, `WasmCspLoader`
+stops with an error when nonce mode is on. Do not put the nonce placeholder
+`AUTUMN_CSP_NONCE` in your own policy: Autumn then sends that fixed text
+as the nonce.
+
+Without the token, the islands keep their fallback.
 
 ### 5. Send new props from the server
 
@@ -158,7 +181,8 @@ use autumn_plugin_leptos::PropsUpdate;
 
 #[post("/rename")]
 async fn rename() -> AutumnResult<(PropsUpdate, Markup)> {
-    let update = PropsUpdate::new().set("#counter", &serde_json::json!({ "start": 0, "label": "Score" }))?;
+    let data = serde_json::json!({ "start": 0, "label": "Score" });
+    let update = PropsUpdate::new().set("#counter", &data)?;
     Ok((update, html! {}))
 }
 ```
@@ -169,8 +193,9 @@ client sets the props signal of the same instance.
 
 - htmx handles `HX-Trigger` before the swap. To update an island that the
   same response swaps in, use `.after_settle()`.
-- Each selector updates the first matching island. Build selectors from
-  trusted values. Keep header props small.
+- Each selector selects the first matching element. If that element is
+  not an island, the loader ignores the update.
+- Build selectors from trusted values. Keep header props small.
 
 App code can send the same event:
 
@@ -189,9 +214,15 @@ let counter = Island::new("Counter")
     .fallback_view(move || counter(Signal::stored(data)));
 ```
 
-Share the component file between the server and the wasm crate (the
-demo uses `#[path]`). The server HTML shows before the wasm loads. The
-loader replaces it with the live component. There is no hydration.
+- Share the component file between the server and the wasm crate. The
+  demo uses `#[path]`.
+- Make signals inside the closure. A signal that you make outside it is
+  never released.
+- Use synchronous views only. A resource or `spawn_local` needs an async
+  runtime that `fallback_view` does not give.
+
+The server HTML shows before the wasm loads. The loader replaces it with
+the live component. There is no hydration.
 
 ## The island element
 
@@ -205,8 +236,8 @@ loader replaces it with the live component. There is no hydration.
 | `data-leptos-island` | `Island::new` | The registered name. A change mounts a new instance. |
 | `data-leptos-props` | `Island::props` | A JSON object. A change sets the props signal. |
 | `data-leptos-mount` | `Island::mount_when` | `idle` or `visible`. No attribute: mount at load. |
-| `data-leptos-state` | the loader | `waiting`, `pending` (name not registered yet), `mounted` or `error`. |
-| `data-leptos-ignore` | you | No island in this element mounts. |
+| `data-leptos-state` | the loader | `waiting`, `pending` (a bundle still loads), `mounted` or `error`. |
+| `data-leptos-ignore` | you | No island and no bundle link in this element loads. |
 
 The loader sends these events. They bubble from the island. An island
 that left the page sends `unmount` on `document`. `detail` has `name` and
@@ -217,7 +248,7 @@ that left the page sends `unmount` on `document`. `detail` has `name` and
 | `autumn:leptos:mount` | The component mounts. |
 | `autumn:leptos:update` | New props are in the DOM. |
 | `autumn:leptos:unmount` | The component unmounts. |
-| `autumn:leptos:error` | Bad props, a mount error or a panic. A bundle that cannot load sends it on `document` with `detail.bundle`. |
+| `autumn:leptos:error` | Bad props, a mount error, a panic, or no loaded bundle has the name. A bundle that cannot load sends it on `document` with `detail.bundle`. |
 
 `window.autumnLeptos.names()` and `window.autumnLeptos.bundles()` show
 the registered names and the bundle states (`loading`, `ready`, `failed`,
@@ -225,43 +256,54 @@ the registered names and the bundle states (`loading`, `ready`, `failed`,
 
 ## Behavior
 
-- **Load.** The loader imports each glue module. It gives `init` a
-  `fetch` of the `.wasm` with its SRI hash. Then it checks the ABI version
-  of the client crate and reads the names.
-- **Mount.** The loader moves the fallback out of the island. Then the
-  client calls Leptos `mount_to`.
-- **Unknown name.** The island stays `pending` and shows its fallback. A
-  later bundle can register the name.
+- **Load.** The loader reads each `link[data-leptos-wasm]`. It refuses a
+  link that is not `rel="modulepreload"`, has no SRI hash, is not
+  same-origin, or is in `[data-leptos-ignore]` or an island. It imports the
+  glue module. It gives `init` a `fetch` of the `.wasm` with its SRI hash.
+  Then it checks the ABI version of the client crate and reads the names.
+- **Mount.** The loader moves the fallback out of the island and keeps a
+  copy in a `<template data-leptos-fallback>`. Then the client calls
+  Leptos `mount_to`.
+- **Unknown name.** The island is `pending` while a bundle loads. When no
+  bundle loads and none has the name, the island gets `error` and keeps
+  its fallback. A later bundle can still mount it.
 - **Errors.** Bad props or a failed mount keep the fallback. Bad props on
   a mounted island keep the last good render. A bundle that cannot load
   (import error, SRI mismatch, ABI mismatch, CSP) writes a console error.
   Each error affects one island or one bundle only.
-- **Panics.** A Rust panic stops the wasm instance. The panic hook tells
-  the loader. Each island of that bundle shows its fallback and gets
-  `error`. The loader makes no more calls into the bundle. Split bundles
+- **Panics.** A Rust panic leaves the wasm instance in an unknown state.
+  The client panic hook calls a private callback of the loader. Each
+  island of that bundle shows its fallback and gets `error`. The loader
+  makes no more calls into the bundle, and the client refuses new work.
+  Timers and listeners that Leptos installed can still run. Split bundles
   to isolate components.
 - **htmx.** One `MutationObserver` mounts added islands and unmounts
   removed islands. An island that moves in one task keeps its instance.
-- **History.** After an htmx history restore, the loader removes the old
-  output and mounts the island again.
+- **History.** An htmx history snapshot has the old output and the kept
+  fallback copy. After a restore, the loader puts the copy back and
+  mounts the island again.
 - **Nesting.** An island inside another island does not mount.
 
 ## Security
 
 - **User HTML.** The loader mounts each `data-leptos-island` element in
-  the page. If your app shows user HTML, the sanitizer **must** remove
-  `data-leptos-*`, `hx-*` and `data-hx-*` attributes. `data-leptos-ignore`
-  alone is not sufficient: an htmx out-of-band swap can move an element
-  out of it.
+  the page and imports each accepted bundle link. If your app shows user
+  HTML, the sanitizer **must** remove `data-leptos-*`, `hx-*` and
+  `data-hx-*` attributes and `<link>` and `<template>` elements.
+  `data-leptos-ignore` does not give full protection. An htmx out-of-band
+  swap can move an element out of it.
 - **Props.** Props are in an HTML attribute. Maud escapes them. Rust
   `serde` reads them into your type. Do not put secrets in props.
 - **Wasm.** `'wasm-unsafe-eval'` allows wasm compilation only. An island
-  is first-party code with the full authority of the page. Do not use
-  islands for untrusted code.
+  runs as first-party code. It can do all the operations that the page
+  can do. Do not use islands for untrusted code.
+- **Attributes.** Maud escapes each `Island::attr` value. Some values are
+  code or URLs (`hx-get`, `hx-vals`, `style`). Do not put user input in
+  them.
 - **Updates.** Any same-origin script and any `HX-Trigger` header can send
   `autumn:leptos:props`. Do not copy user input into a trigger header.
-- **Names.** The first registration of a name stays. A library bundle
-  must use a prefix in its names (`Acme.Chart`).
+- **Names.** A library bundle must use a prefix in its names
+  (`Acme.Chart`).
 
 ## Demo
 
@@ -271,8 +313,9 @@ cargo run --features ssr --example leptos_demo
 
 Open <http://127.0.0.1:3000>. The demo has a counter with an SSR fallback
 and a props update, a clock that htmx adds and removes, and a panic
-button. The bundle in `examples/islands/` is committed, so you need no
-wasm toolchain to run it. Rebuild it with `examples/islands-app/build.sh`.
+button. The repository contains the bundle in `examples/islands/`. You do
+not need a wasm toolchain to run the demo. Rebuild the bundle with
+`examples/islands-app/build.sh`.
 
 ## Development
 
@@ -283,6 +326,9 @@ cargo llvm-cov --workspace --all-features --all-targets --summary-only
 examples/islands-app/build.sh          # rebuild the demo bundle
 examples/islands-app/build.sh --check  # is the bundle fresh?
 ```
+
+The browser tests need Chrome or Chromium on `PATH`, or the binary path in
+`AUTUMN_CHROMIUM`.
 
 See the [plan](docs/plan.md) and
 [ADR 0001](docs/adr/0001-leptos-islands.md).

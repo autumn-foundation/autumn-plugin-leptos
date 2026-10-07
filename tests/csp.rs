@@ -238,3 +238,33 @@ fn the_default_loader_wraps_toml_and_env() {
     let text = format!("{:?}", WasmCspLoader::default());
     assert!(text.contains("TomlEnvConfigLoader"), "{text}");
 }
+
+/// A loader that returns a config with nonce mode on.
+struct NonceMode;
+
+impl autumn_web::config::ConfigLoader for NonceMode {
+    fn load(
+        &self,
+    ) -> impl Future<Output = Result<AutumnConfig, autumn_web::config::ConfigError>> + Send {
+        let mut config = AutumnConfig::default();
+        config.security.headers.csp_nonce.enabled = true;
+        std::future::ready(Ok(config))
+    }
+}
+
+#[tokio::test]
+async fn the_loader_refuses_nonce_mode() {
+    use autumn_plugin_leptos::WasmCspLoader;
+    use autumn_web::config::{ConfigError, ConfigLoader as _};
+
+    // An explicit policy turns off Autumn nonce injection. Refuse, so that
+    // the app does not lose its nonces without a sign.
+    let error = WasmCspLoader::new(NonceMode)
+        .load()
+        .await
+        .expect_err("nonce mode");
+    assert!(
+        matches!(&error, ConfigError::Validation(m) if m.contains("csp_nonce")),
+        "{error}"
+    );
+}

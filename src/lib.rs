@@ -51,7 +51,7 @@
 //! # }
 //! ```
 //!
-//! 3. Set a CSP that allows wasm: [`wasm_csp()`].
+//! 3. Set a CSP that allows wasm: [`WasmCspLoader`] or [`wasm_csp()`].
 //!
 //! The loader (`leptos-islands.js`) imports each bundle and mounts each
 //! island. It mounts islands that htmx swaps in and unmounts islands that
@@ -66,10 +66,12 @@
 //!
 //! # Security
 //!
-//! The loader mounts each `data-leptos-island` element in the page. If your
-//! app shows user HTML, the sanitizer must remove `data-leptos-*`, `hx-*`
-//! and `data-hx-*` attributes. `data-leptos-ignore` alone is not
-//! sufficient: an htmx out-of-band swap can move an element out of it.
+//! The loader mounts each `data-leptos-island` element in the page and
+//! imports each accepted bundle link. If your app shows user HTML, the
+//! sanitizer must remove `data-leptos-*`, `hx-*` and `data-hx-*`
+//! attributes and `<link>` and `<template>` elements. `data-leptos-ignore`
+//! does not give full protection. An htmx out-of-band swap can move an
+//! element out of it.
 
 mod assets;
 mod csp;

@@ -1,6 +1,6 @@
 //! Tag helpers for the page `<head>`.
 
-use autumn_web::assets::PluginAssets;
+use autumn_web::assets::{PluginAsset, PluginAssets};
 use maud::Markup;
 
 use crate::assets::{LEPTOS_ASSETS, LOADER_JS};
@@ -30,24 +30,38 @@ pub fn leptos_script() -> Markup {
 ///      the hashed wasm URL and its SRI hash. The loader reads them.
 ///    - `<link rel="preload" as="fetch">` for the wasm module.
 ///
-/// Files in a group are in logical-path order. Other files (snippets,
-/// fonts, source maps) get no tag. Each tag has the hashed URL and
-/// `integrity`.
+/// 3. `<link rel="modulepreload">` for each other `.js` file (a
+///    wasm-bindgen snippet), at its plain URL. The glue imports snippets
+///    by that URL, so the browser checks their SRI hash.
+///
+/// Files in a group are in logical-path order. Other files (fonts, source
+/// maps) get no tag. Each tag has `integrity`.
 #[must_use]
 pub fn leptos_bundle(bundle: &PluginAssets) -> Markup {
-    let css = bundle.iter().filter(|asset| {
+    let has_ext = |asset: &PluginAsset, ext: &str| {
         std::path::Path::new(asset.logical_path())
             .extension()
-            .is_some_and(|ext| ext.eq_ignore_ascii_case("css"))
+            .is_some_and(|e| e.eq_ignore_ascii_case(ext))
+    };
+    let css = bundle.iter().filter(|asset| has_ext(asset, "css"));
+    let pairs: Vec<_> = wasm_pairs(bundle).collect();
+    // Other JavaScript files are snippets. The glue imports them by their
+    // plain URL.
+    let snippets = bundle.iter().filter(|asset| {
+        has_ext(asset, "js") && !pairs.iter().any(|(glue, _)| std::ptr::eq(*glue, *asset))
     });
     maud::html! {
         @for asset in css { (bundle.stylesheet_tag(asset.logical_path())) }
-        @for (glue, wasm) in wasm_pairs(bundle) {
+        @for (glue, wasm) in &pairs {
             link rel="modulepreload" href=(glue.url()) integrity=(glue.integrity())
                 crossorigin="anonymous" data-leptos-wasm=(wasm.url())
                 data-leptos-wasm-integrity=(wasm.integrity());
             link rel="preload" href=(wasm.url()) as="fetch" type="application/wasm"
                 integrity=(wasm.integrity()) crossorigin="anonymous";
+        }
+        @for snippet in snippets {
+            link rel="modulepreload" href=(snippet.plain_url())
+                integrity=(snippet.integrity()) crossorigin="anonymous";
         }
     }
 }

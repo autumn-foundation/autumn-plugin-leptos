@@ -54,8 +54,9 @@ fn loader_tag_is_deferred_with_sri() {
 }
 
 #[test]
-fn bundle_tags_are_css_then_each_wasm_pair() {
+fn bundle_tags_are_css_then_each_wasm_pair_then_snippets() {
     let css = APP.get("style.css").expect("css");
+    let snippet = APP.get("snippets/x/inline0.js").expect("snippet");
     let expected = [
         format!(
             r#"<link rel="stylesheet" href="{}" integrity="{}" crossorigin="anonymous">"#,
@@ -64,6 +65,13 @@ fn bundle_tags_are_css_then_each_wasm_pair() {
         ),
         glue_tags("a.js", "a_bg.wasm"),
         glue_tags("b.js", "b_bg.wasm"),
+        // The glue imports a snippet by its plain URL. The preload gives
+        // that import an SRI check.
+        format!(
+            r#"<link rel="modulepreload" href="{}" integrity="{}" crossorigin="anonymous">"#,
+            snippet.plain_url(),
+            snippet.integrity()
+        ),
     ]
     .concat();
     assert_eq!(leptos_bundle(&APP).into_string(), expected);
@@ -84,8 +92,8 @@ fn glue_tag_carries_the_hashed_wasm_url() {
 #[test]
 fn bundle_tags_skip_other_files() {
     let html = leptos_bundle(&APP).into_string();
-    // Snippets load through the glue `import`. Fonts and maps get no tag.
-    for skipped in ["inline0", "font.", ".map", "<script"] {
+    // Fonts and maps get no tag.
+    for skipped in ["font.", ".map", "<script"] {
         assert!(!html.contains(skipped), "{skipped}: {html}");
     }
 }

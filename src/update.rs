@@ -35,8 +35,9 @@ const HX_TRIGGER_AFTER_SETTLE: &str = "hx-trigger-after-settle";
 /// - htmx handles `HX-Trigger` before the swap. To update an island that
 ///   the same response swaps in, use [`after_settle`](Self::after_settle).
 /// - The update merges with a trigger header that the response already
-///   has. A header that later code sets with `insert` replaces it. Then
-///   call [`apply_to`](Self::apply_to) last.
+///   has. If your code sets the header later with `insert`, that header
+///   replaces the update. In this case, call
+///   [`apply_to`](Self::apply_to) after your code sets the header.
 /// - Props travel in a response header. Keep them small: proxies limit
 ///   header size (nginx: 4 KB to 8 KB by default).
 /// - Build selectors from trusted values. A selector from user input can

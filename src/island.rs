@@ -81,7 +81,8 @@ pub enum AttrError {
     /// character other than `A-Z a-z 0-9 - _ : .`.
     #[error("`{0}` is not a valid attribute name")]
     InvalidName(String),
-    /// The name is `id`, `class`, `data-leptos-*` or an `on*` event handler.
+    /// The name is `id`, `class`, `data-leptos-*`, an `on*` event handler or
+    /// an htmx `hx-on*` handler.
     #[error("the island attribute `{0}` is reserved; use the island builder method or the loader")]
     Reserved(String),
 }
@@ -99,6 +100,8 @@ fn check_attr_name(name: &str) -> Result<(), AttrError> {
         || lower == "class"
         || lower.starts_with("data-leptos-")
         || lower.starts_with("on")
+        || lower.starts_with("hx-on")
+        || lower.starts_with("data-hx-on")
     {
         return Err(AttrError::Reserved(name.to_owned()));
     }
@@ -214,6 +217,11 @@ impl Island {
     ///
     /// The view runs in its own reactive owner. Effects do not run on the
     /// server.
+    ///
+    /// - Make signals inside the closure (`Signal::stored(data)`). A signal
+    ///   that you make outside it is never released.
+    /// - Use synchronous views only. A resource or `spawn_local` needs an
+    ///   async runtime that this method does not give.
     #[cfg(feature = "ssr")]
     pub fn fallback_view<F, V>(self, view: F) -> Self
     where
@@ -237,7 +245,8 @@ impl Island {
     }
 
     /// Adds an attribute, for example `role`, `aria-label` or
-    /// `hx-preserve`. A second call with the same name replaces the value.
+    /// `hx-preserve`. A second call with the same name (in any letter case)
+    /// replaces the first.
     ///
     /// # Errors
     ///
@@ -254,8 +263,13 @@ impl Island {
         let name = name.into();
         check_attr_name(&name)?;
         let value = value.into();
-        match self.attrs.iter_mut().find(|(n, _)| *n == name) {
-            Some(slot) => slot.1 = value,
+        // HTML attribute names are not case-sensitive.
+        match self
+            .attrs
+            .iter_mut()
+            .find(|(n, _)| n.eq_ignore_ascii_case(&name))
+        {
+            Some(slot) => *slot = (name, value),
             None => self.attrs.push((name, value)),
         }
         Ok(self)

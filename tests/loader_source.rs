@@ -47,8 +47,18 @@ fn imports_only_bundle_urls() {
 #[test]
 fn fetches_wasm_with_its_integrity() {
     let code = code();
-    assert!(code.contains("integrity"), "SRI for the wasm fetch");
-    assert!(code.contains("module_or_path"), "wasm-bindgen init option");
+    assert!(
+        code.contains("options.integrity = wasmIntegrity"),
+        "SRI for the wasm fetch"
+    );
+    assert!(
+        code.contains("fetch(wasm, options)"),
+        "the fetch uses the options"
+    );
+    assert!(
+        code.contains("{ module_or_path: response }"),
+        "wasm-bindgen init option"
+    );
 }
 
 #[test]
@@ -90,7 +100,6 @@ fn names_the_public_contract() {
         "data-leptos-wasm-integrity",
         "autumn:leptos:",
         "autumn:leptos:props",
-        "autumn:leptos:panic",
         "autumn_leptos_abi",
         "autumn_leptos_start",
         "autumn_leptos_mount",

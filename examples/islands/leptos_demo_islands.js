@@ -30,7 +30,7 @@ export class AutumnLeptosIsland {
      *
      * # Errors
      *
-     * [`IslandError::BadProps`], as a JavaScript `Error`.
+     * Bad props, or a panic before, as a JavaScript `Error`.
      * @param {string} props
      */
     update(props) {
@@ -176,7 +176,8 @@ export function autumn_leptos_abi() {
  *
  * # Errors
  *
- * [`IslandError`], as a JavaScript `Error`. The DOM does not change.
+ * An unknown name, bad props or a panic before, as a JavaScript `Error`.
+ * The DOM does not change.
  * @param {string} name
  * @param {HTMLElement} element
  * @param {string} props
@@ -203,22 +204,31 @@ export function autumn_leptos_mount(name, element, props) {
 }
 
 /**
- * ABI: keeps the bundle URL for panic reports, installs the panic hook
- * and returns the registered names.
- * @param {string} bundle
+ * ABI: keeps the panic callback of the loader and returns the registered
+ * names.
+ *
+ * # Errors
+ *
+ * A panic before this call (for example, in an async task of the start
+ * function), as a JavaScript `Error`. The loader then marks the bundle as
+ * failed.
+ * @param {Function} on_panic
  * @returns {string[]}
  */
-export function autumn_leptos_start(bundle) {
+export function autumn_leptos_start(on_panic) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        const ptr0 = passStringToWasm0(bundle, wasm.__wbindgen_export, wasm.__wbindgen_export2);
-        const len0 = WASM_VECTOR_LEN;
-        wasm.autumn_leptos_start(retptr, ptr0, len0);
+        wasm.autumn_leptos_start(retptr, addHeapObject(on_panic));
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
-        var v2 = getArrayJsValueFromWasm0(r0, r1);
+        var r2 = getDataViewMemory0().getInt32(retptr + 4 * 2, true);
+        var r3 = getDataViewMemory0().getInt32(retptr + 4 * 3, true);
+        if (r3) {
+            throw takeObject(r2);
+        }
+        var v1 = getArrayJsValueFromWasm0(r0, r1);
         wasm.__wbindgen_export5(r0, r1 * 4, 4);
-        return v2;
+        return v1;
     } finally {
         wasm.__wbindgen_add_to_stack_pointer(16);
     }
@@ -318,10 +328,6 @@ function __wbg_get_imports() {
             const ret = Reflect.deleteProperty(getObject(arg0), getObject(arg1));
             return ret;
         }, arguments); },
-        __wbg_dispatchEvent_57e1a8af186ff471: function() { return handleError(function (arg0, arg1) {
-            const ret = getObject(arg0).dispatchEvent(getObject(arg1));
-            return ret;
-        }, arguments); },
         __wbg_document_9854e03c05fc8834: function(arg0) {
             const ret = getObject(arg0).document;
             return isLikeNone(ret) ? 0 : addHeapObject(ret);
@@ -379,10 +385,6 @@ function __wbg_get_imports() {
             const ret = new Error(getStringFromWasm0(arg0, arg1));
             return addHeapObject(ret);
         },
-        __wbg_new_617a8cdb8bb1130e: function() {
-            const ret = new Object();
-            return addHeapObject(ret);
-        },
         __wbg_new_typed_b01cb72a8af741a3: function(arg0, arg1) {
             try {
                 var state0 = {a: arg0, b: arg1};
@@ -390,7 +392,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return __wasm_bindgen_func_elem_544(a, state0.b, arg0, arg1);
+                        return __wasm_bindgen_func_elem_539(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -405,10 +407,6 @@ function __wbg_get_imports() {
             const ret = new Uint8Array(getObject(arg0), arg1 >>> 0, arg2 >>> 0);
             return addHeapObject(ret);
         },
-        __wbg_new_with_event_init_dict_536cb65c14ffc56b: function() { return handleError(function (arg0, arg1, arg2) {
-            const ret = new CustomEvent(getStringFromWasm0(arg0, arg1), getObject(arg2));
-            return addHeapObject(ret);
-        }, arguments); },
         __wbg_parentNode_32afd0d7ad7dca98: function(arg0) {
             const ret = getObject(arg0).parentNode;
             return isLikeNone(ret) ? 0 : addHeapObject(ret);
@@ -447,9 +445,6 @@ function __wbg_get_imports() {
         __wbg_set_575d3ddb70fe831d: function(arg0, arg1, arg2) {
             getObject(arg0).set(getArrayU8FromWasm0(arg1, arg2));
         },
-        __wbg_set_detail_69a5bfecc90520f4: function(arg0, arg1) {
-            getObject(arg0).detail = getObject(arg1);
-        },
         __wbg_set_nodeValue_e265de7160527936: function(arg0, arg1, arg2) {
             getObject(arg0).nodeValue = arg1 === 0 ? undefined : getStringFromWasm0(arg1, arg2);
         },
@@ -483,7 +478,7 @@ function __wbg_get_imports() {
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
             // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 24, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_478);
+            const ret = makeMutClosure(arg0, arg1, __wasm_bindgen_func_elem_473);
             return addHeapObject(ret);
         },
         __wbindgen_generic_0000000000000002: function(arg0, arg1) {
@@ -532,14 +527,14 @@ function __wasm_bindgen_func_elem_1740_19(arg0, arg1, arg2) {
     wasm.__wasm_bindgen_func_elem_1740_19(arg0, arg1, addHeapObject(arg2));
 }
 
-function __wasm_bindgen_func_elem_544(arg0, arg1, arg2, arg3) {
-    wasm.__wasm_bindgen_func_elem_544(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
+function __wasm_bindgen_func_elem_539(arg0, arg1, arg2, arg3) {
+    wasm.__wasm_bindgen_func_elem_539(arg0, arg1, addHeapObject(arg2), addHeapObject(arg3));
 }
 
-function __wasm_bindgen_func_elem_478(arg0, arg1, arg2) {
+function __wasm_bindgen_func_elem_473(arg0, arg1, arg2) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        wasm.__wasm_bindgen_func_elem_478(retptr, arg0, arg1, addHeapObject(arg2));
+        wasm.__wasm_bindgen_func_elem_473(retptr, arg0, arg1, addHeapObject(arg2));
         var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
         var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
         if (r1) {

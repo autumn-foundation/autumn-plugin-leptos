@@ -12,18 +12,20 @@
 use std::time::Duration;
 
 use autumn_plugin_leptos::{
-    Island, LeptosPlugin, MountWhen, PropsUpdate, leptos_bundle, leptos_script, wasm_csp,
+    Island, LeptosPlugin, MountWhen, PropsUpdate, WasmCspLoader, leptos_bundle, leptos_script,
 };
 use autumn_web::assets::PluginAssets;
-use autumn_web::config::AutumnConfig;
+use autumn_web::config::{AutumnConfig, ConfigError, ConfigLoader};
 use autumn_web::prelude::*;
 use autumn_web::reexports::axum;
 use autumn_web::reexports::axum::extract::Path;
+use autumn_web::security::default_content_security_policy;
 use autumn_web::system_test::{Page, SystemTest, SystemTestRunner};
 use autumn_web::test::TestApp;
 use serde::de::DeserializeOwned;
 
 const WASM: &[u8] = include_bytes!("fixtures/fake_bg.wasm");
+const BAD_SRI: &str = "sha384-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 static FAKE: PluginAssets = PluginAssets::from_files(
     "leptos-fake",
@@ -105,6 +107,14 @@ async fn probe_js() -> ([(&'static str, &'static str); 1], &'static str) {
     (
         [("content-type", "text/javascript")],
         include_str!("fixtures/probe.js"),
+    )
+}
+
+#[get("/noidle.js")]
+async fn noidle_js() -> ([(&'static str, &'static str); 1], &'static str) {
+    (
+        [("content-type", "text/javascript")],
+        include_str!("fixtures/noidle.js"),
     )
 }
 
@@ -225,6 +235,7 @@ async fn ignore() -> Markup {
 #[get("/failures")]
 async fn failures() -> Markup {
     let fake = FAKE.get("fake.js").expect("glue");
+    let dup = DUP.get("dup.js").expect("glue");
     page_with(
         &html! {
             (leptos_script())
@@ -233,10 +244,16 @@ async fn failures() -> Markup {
             link rel="modulepreload" href=(fake.url()) integrity=(fake.integrity())
                 crossorigin="anonymous" data-leptos-wasm=(FAKE.url("fake_bg.wasm"))
                 data-leptos-wasm-integrity="sha384-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-            link rel="modulepreload" href="/missing/glue.js" data-leptos-wasm="/missing/glue_bg.wasm";
+            link rel="modulepreload" href="/missing/glue.js" integrity=(BAD_SRI)
+                data-leptos-wasm="/missing/glue_bg.wasm" data-leptos-wasm-integrity=(BAD_SRI);
+            // The SRI hash does not match the glue bytes.
+            link rel="modulepreload" href=(dup.url()) integrity=(BAD_SRI) crossorigin="anonymous"
+                data-leptos-wasm=(DUP.url("dup_bg.wasm"))
+                data-leptos-wasm-integrity=(DUP.integrity("dup_bg.wasm").unwrap_or_default());
             (leptos_bundle(&OTHER))
         },
         &html! {
+            (Island::new("Late").id("late").fallback(html! { i { "late fallback" } }))
             (Island::new("Bad").id("bad").fallback(html! { i { "bad fallback" } }))
             (Island::new("Echo").id("echo").fallback(html! { i { "echo fallback" } }))
             (Island::new("Other").id("o").fallback(html! { i { "other fallback" } }))
@@ -280,11 +297,108 @@ async fn history() -> Markup {
     })
 }
 
-fn app(csp: Option<String>) -> TestApp {
-    let mut config = AutumnConfig::default();
-    if let Some(csp) = csp {
-        config.security.headers.content_security_policy = csp;
+#[get("/links")]
+async fn links() -> Markup {
+    let other = OTHER.get("other.js").expect("glue");
+    let wasm = OTHER.get("other_bg.wasm").expect("wasm");
+    // Each of these links is refused. Only `FAKE` loads.
+    let refused = |href: &str, rel: &str, integrity: &str| {
+        html! {
+            link rel=(rel) href=(href) integrity=(integrity) crossorigin="anonymous"
+                data-leptos-wasm=(wasm.url()) data-leptos-wasm-integrity=(wasm.integrity());
+        }
+    };
+    page_with(
+        &html! {
+            (leptos_script())
+            (leptos_bundle(&FAKE))
+            (refused("https://example.invalid/other.js", "modulepreload", other.integrity()))
+            (refused(other.url(), "preload", other.integrity()))
+            (refused(other.url(), "modulepreload", ""))
+        },
+        &html! {
+            div data-leptos-ignore {
+                (refused(other.url(), "modulepreload", other.integrity()))
+            }
+            (Island::new("Other").id("o").fallback(html! { i { "other fallback" } }))
+            (echo("e", "links"))
+        },
+    )
+}
+
+#[get("/attrs")]
+async fn attrs() -> Markup {
+    page_with(
+        &html! { (leptos_script()) (leptos_bundle(&FAKE)) (leptos_bundle(&OTHER)) },
+        &html! {
+            (echo("rename", "rename"))
+            div #badp data-leptos-island="Echo" data-leptos-props="[1]" { i { "bad fallback" } }
+            div #plain { i { "plain fallback" } }
+            div #zone data-leptos-ignore {}
+            (echo("mover", "mover"))
+            (echo("wrapped", "wrapped"))
+            div style="height: 5000px" {}
+            (echo("wait", "wait").mount_when(MountWhen::Visible))
+        },
+    )
+}
+
+#[get("/nolazy")]
+async fn nolazy() -> Markup {
+    page_with(
+        &html! { script src="/noidle.js" {} (leptos_script()) (leptos_bundle(&FAKE)) },
+        &html! {
+            (echo("idle", "idle").mount_when(MountWhen::Idle))
+            (echo("visible", "visible").mount_when(MountWhen::Visible))
+        },
+    )
+}
+
+#[get("/settle-page")]
+async fn settle_page() -> Markup {
+    page(&html! {
+        button #load hx-get="/settle" hx-target="#slot" { "Load" }
+        div #slot {}
+    })
+}
+
+#[get("/settle")]
+async fn settle() -> AutumnResult<(PropsUpdate, Markup)> {
+    let update = PropsUpdate::new()
+        .set("#s", &serde_json::json!({ "k": "settled" }))?
+        .after_settle();
+    Ok((update, html! { (echo("s", "swapped")) }))
+}
+
+#[get("/template")]
+async fn template_page() -> Markup {
+    // A history snapshot of a mounted island: old output and the fallback
+    // copy that the loader keeps.
+    page(&html! {
+        div style="height: 5000px" {}
+        div #t data-leptos-island="Echo" data-leptos-props="{\"k\":\"t\"}"
+            data-leptos-mount="visible" data-leptos-state="mounted" {
+            template data-leptos-fallback { i { "original fallback" } }
+            span.echo { "stale" }
+        }
+    })
+}
+
+/// A loader that returns the Autumn defaults.
+struct Defaults;
+
+impl ConfigLoader for Defaults {
+    fn load(&self) -> impl Future<Output = Result<AutumnConfig, ConfigError>> + Send {
+        std::future::ready(Ok(AutumnConfig::default()))
     }
+}
+
+/// The config that `WasmCspLoader` loads: the default CSP plus the token.
+async fn wasm_config() -> AutumnConfig {
+    WasmCspLoader::new(Defaults).load().await.expect("config")
+}
+
+fn app(config: AutumnConfig) -> TestApp {
     TestApp::new()
         .config(config)
         .plugin(
@@ -296,14 +410,36 @@ fn app(csp: Option<String>) -> TestApp {
                 .bundle(&REAL),
         )
         .routes(routes![
-            probe_js, empty, fake, real, swap, fragment, lazy, errors, panic_page, order, ignore,
-            failures, late, dup_link, props_page, bump, history
+            probe_js,
+            empty,
+            fake,
+            real,
+            swap,
+            fragment,
+            lazy,
+            errors,
+            panic_page,
+            order,
+            ignore,
+            failures,
+            late,
+            dup_link,
+            props_page,
+            bump,
+            history,
+            noidle_js,
+            links,
+            attrs,
+            nolazy,
+            settle_page,
+            settle,
+            template_page
         ])
 }
 
 /// Serves the app on a free port and opens Chromium on it.
-async fn start_with(csp: Option<String>) -> SystemTestRunner {
-    let router = app(csp).build().into_router();
+async fn start_with(config: AutumnConfig) -> SystemTestRunner {
+    let router = app(config).build().into_router();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind");
@@ -316,9 +452,9 @@ async fn start_with(csp: Option<String>) -> SystemTestRunner {
         .expect("Chromium")
 }
 
-/// The app with the wasm CSP.
+/// The app with the CSP from `WasmCspLoader`.
 async fn start() -> SystemTestRunner {
-    start_with(Some(wasm_csp())).await
+    start_with(wasm_config().await).await
 }
 
 async fn run(page: &Page, js: &str) {
@@ -364,7 +500,7 @@ async fn wait_state(page: &Page, id: &str, value: &str) {
     wait_for(
         page,
         &format!(
-            "document.getElementById('{id}')?.getAttribute('data-leptos-state') === '{value}'"
+            "(document.getElementById('{id}')?.getAttribute('data-leptos-state') || '') === '{value}'"
         ),
     )
     .await;
@@ -393,6 +529,11 @@ async fn real_leptos_component_mounts_with_props_and_reacts() {
     let runner = start().await;
     let page = runner.page().await.expect("page");
     page.visit("/real").await.expect("visit");
+    wait_for(
+        &page,
+        "autumnLeptos.bundles().every((b) => b.state === 'ready')",
+    )
+    .await;
     wait_state(&page, "counter", "mounted").await;
     page.expect_text("Hits: 3").await.expect("props");
     assert!(!text(&page, "counter").await.contains("(server)"));
@@ -407,10 +548,14 @@ async fn real_leptos_component_mounts_with_props_and_reacts() {
     page.expect_no_console_errors()
         .await
         .expect("clean console");
-    let response = app(Some(wasm_csp())).build().get("/real").send().await;
+    let response = app(wasm_config().await).build().get("/real").send().await;
+    let expected = default_content_security_policy().replace(
+        "script-src 'self';",
+        "script-src 'self' 'wasm-unsafe-eval';",
+    );
     assert_eq!(
         response.header("content-security-policy"),
-        Some(wasm_csp().as_str())
+        Some(expected.as_str())
     );
 }
 
@@ -506,7 +651,7 @@ async fn a_real_panic_crashes_only_its_own_bundle() {
 #[tokio::test]
 #[ignore = "requires Chromium"]
 async fn the_default_csp_blocks_wasm_and_keeps_the_fallback() {
-    let runner = start_with(None).await;
+    let runner = start_with(AutumnConfig::default()).await;
     let page = runner.page().await.expect("page");
     page.visit("/real").await.expect("visit");
     wait_for(
@@ -514,8 +659,8 @@ async fn the_default_csp_blocks_wasm_and_keeps_the_fallback() {
         "autumnLeptos.bundles().some((b) => b.state === 'failed')",
     )
     .await;
+    wait_state(&page, "counter", "error").await;
     assert_eq!(text(&page, "counter").await, "Hits: 3 (server)");
-    assert_eq!(state(&page, "counter").await, "pending");
     wait_for(&page, "__leptosLog.includes('error:bundle:')").await;
     // The fake bundle has no real wasm, so the CSP does not stop it.
     wait_state(&page, "e1", "mounted").await;
@@ -564,7 +709,14 @@ async fn htmx_swaps_mount_and_unmount_and_moves_keep_the_instance() {
         "document.getElementById('other').appendChild(document.getElementById('i1'))",
     )
     .await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
+    // Sentinel: a later island mounts, so the observer saw the move.
+    run(
+        &page,
+        "const s = document.createElement('div'); s.id = 'sentinel'; \
+         s.setAttribute('data-leptos-island', 'Echo'); document.body.append(s)",
+    )
+    .await;
+    wait_state(&page, "sentinel", "mounted").await;
     let moved: String = eval(
         &page,
         "document.querySelector('#i1 .echo').dataset.instance",
@@ -584,6 +736,7 @@ async fn htmx_swaps_mount_and_unmount_and_moves_keep_the_instance() {
     wait_for(&page, "__leptosLog.includes('destroy:{\"k\":\"1\"}')").await;
     let log = log(&page).await;
     assert_eq!(count(&log, "unmount:Echo"), 2, "{log:?}");
+    assert_eq!(count(&log, "mount:Echo"), 3, "{log:?}");
     page.expect_no_console_errors()
         .await
         .expect("clean console");
@@ -682,7 +835,8 @@ async fn errors_affect_one_island_only() {
         wait_state(&page, id, "error").await;
         assert_eq!(text(&page, id).await, fallback, "{id}");
     }
-    assert_eq!(state(&page, "unknown").await, "pending");
+    // No bundle loads now, and none registers the name.
+    wait_state(&page, "unknown", "error").await;
     assert_eq!(text(&page, "unknown").await, "unknown fallback");
     let log = log(&page).await;
     for name in ["Broken", "Partial"] {
@@ -748,9 +902,16 @@ async fn order_second_loader_and_clobbering_are_harmless() {
     let page = runner.page().await.expect("page");
     page.visit("/order").await.expect("visit");
     wait_state(&page, "e", "mounted").await;
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    run(
+        &page,
+        "const s = document.createElement('div'); s.id = 'sentinel'; \
+         s.setAttribute('data-leptos-island', 'Echo'); document.body.append(s)",
+    )
+    .await;
+    wait_state(&page, "sentinel", "mounted").await;
     let log = log(&page).await;
-    assert_eq!(count(&log, "mount:"), 1, "{log:?}");
+    // Two islands, one mount each: the second loader copy did nothing.
+    assert_eq!(count(&log, "create:"), 2, "{log:?}");
     assert_eq!(count(&log, "init"), 1, "{log:?}");
     let loader: bool = eval(&page, "window.autumnLeptos.loader === true").await;
     assert!(loader);
@@ -805,16 +966,25 @@ async fn bad_bundles_fail_alone() {
     wait_state(&page, "o", "mounted").await;
     wait_for(
         &page,
-        "autumnLeptos.bundles().filter((b) => b.state === 'failed').length === 3",
+        "autumnLeptos.bundles().filter((b) => b.state === 'failed').length === 4",
     )
     .await;
-    for (id, fallback) in [("bad", "bad fallback"), ("echo", "echo fallback")] {
-        assert_eq!(state(&page, id).await, "pending", "{id}");
+    // No bundle loads now: the names stay unknown.
+    for (id, fallback) in [
+        ("bad", "bad fallback"),
+        ("echo", "echo fallback"),
+        ("late", "late fallback"),
+    ] {
+        wait_state(&page, id, "error").await;
         assert_eq!(text(&page, id).await, fallback);
     }
     let log = log(&page).await;
-    assert_eq!(count(&log, "error:bundle:"), 3, "{log:?}");
+    assert_eq!(count(&log, "error:bundle:"), 4, "{log:?}");
     assert_eq!(count(&log, "init"), 0, "SRI stops the wasm: {log:?}");
+    assert!(
+        !log.iter().any(|l| l.contains("dup")),
+        "SRI stops the glue: {log:?}"
+    );
     let errors = page.console_errors();
     assert!(errors.iter().any(|e| e.contains("ABI")), "{errors:?}");
 }
@@ -828,7 +998,8 @@ async fn a_late_bundle_mounts_pending_islands() {
     let page = runner.page().await.expect("page");
     page.visit("/late").await.expect("visit");
     wait_state(&page, "e", "mounted").await;
-    assert_eq!(state(&page, "late").await, "pending");
+    // No bundle registers `Late` and no bundle loads.
+    wait_state(&page, "late", "error").await;
     run(
         &page,
         "fetch('/dup-link').then((r) => r.text()).then((t) => { \
@@ -916,4 +1087,248 @@ async fn events_carry_name_and_element() {
     wait_for(&page, "__seen.includes('update:Echo:e1')").await;
     run(&page, "document.getElementById('e1').remove()").await;
     wait_for(&page, "__seen.includes('unmount:Echo:e1')").await;
+}
+
+// AC11: a panic event from page code does nothing.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn a_spoofed_panic_event_does_nothing() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/fake").await.expect("visit");
+    wait_state(&page, "e1", "mounted").await;
+    run(
+        &page,
+        "autumnLeptos.bundles().forEach((b) => document.dispatchEvent(new CustomEvent( \
+           'autumn:leptos:panic', { detail: { bundle: b.url, message: 'spoof' } })))",
+    )
+    .await;
+    run(
+        &page,
+        r#"document.getElementById('e1').setAttribute('data-leptos-props', '{"k":"after"}')"#,
+    )
+    .await;
+    wait_for(&page, "__leptosLog.includes('set:{\"k\":\"after\"}')").await;
+    assert_eq!(state(&page, "e1").await, "mounted");
+}
+
+// AC11: a panic during `update` gives one error and the fallback.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn a_panic_during_update_gives_one_error() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/fake").await.expect("visit");
+    wait_state(&page, "e1", "mounted").await;
+    run(
+        &page,
+        "document.getElementById('e1').setAttribute('data-leptos-island', 'Fragile')",
+    )
+    .await;
+    wait_for(&page, "__leptosLog.includes('mount:Fragile:{\"k\":\"1\"}')").await;
+    run(
+        &page,
+        r#"document.getElementById('e1').setAttribute('data-leptos-props', '{"k":"x"}')"#,
+    )
+    .await;
+    wait_state(&page, "e1", "error").await;
+    assert_eq!(text(&page, "e1").await, "fallback 1");
+    let log = log(&page).await;
+    assert_eq!(count(&log, "error:Fragile:"), 1, "{log:?}");
+}
+
+// AC11: a panic that JS catches during a mount still crashes the bundle.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn a_swallowed_panic_during_mount_crashes_the_bundle() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/fake").await.expect("visit");
+    wait_state(&page, "e1", "mounted").await;
+    run(
+        &page,
+        "const s = document.createElement('div'); s.id = 'sw'; \
+         s.setAttribute('data-leptos-island', 'Swallow'); s.textContent = 'swallow fallback'; \
+         document.body.append(s)",
+    )
+    .await;
+    wait_state(&page, "sw", "error").await;
+    wait_state(&page, "e1", "error").await;
+    assert_eq!(text(&page, "sw").await, "swallow fallback");
+    // No call into the crashed bundle: a removal does not unmount.
+    run(
+        &page,
+        "document.getElementById('sw').remove(); document.getElementById('e1').remove(); \
+         setTimeout(() => { window.__sentinel = true; }, 20)",
+    )
+    .await;
+    wait_for(&page, "window.__sentinel === true").await;
+    let log = log(&page).await;
+    assert_eq!(count(&log, "error:Swallow:"), 1, "{log:?}");
+    assert_eq!(count(&log, "destroy:"), 0, "{log:?}");
+}
+
+// AC8: an update event never follows a later error.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn no_update_event_after_a_later_error() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/fake").await.expect("visit");
+    wait_state(&page, "e1", "mounted").await;
+    run(
+        &page,
+        r#"const el = document.getElementById('e1');
+           el.setAttribute('data-leptos-props', '{"k":"good"}');
+           queueMicrotask(() => queueMicrotask(() => el.setAttribute('data-leptos-props', '[1]')));
+           setTimeout(() => setTimeout(() => { window.__sentinel = true; }, 20), 0);"#,
+    )
+    .await;
+    wait_for(&page, "window.__sentinel === true").await;
+    assert_eq!(state(&page, "e1").await, "error");
+    let log = log(&page).await;
+    assert!(log.contains(&"set:{\"k\":\"good\"}".to_owned()), "{log:?}");
+    assert_eq!(count(&log, "update:Echo:"), 0, "{log:?}");
+    assert_eq!(count(&log, "error:Echo:"), 1, "{log:?}");
+}
+
+// AC12: the loader imports only same-origin `modulepreload` links with
+// SRI, outside ignored regions.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn untrusted_bundle_links_are_refused() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/links").await.expect("visit");
+    wait_state(&page, "e", "mounted").await;
+    wait_state(&page, "o", "error").await;
+    let bundles: Vec<serde_json::Value> = eval(&page, "autumnLeptos.bundles()").await;
+    assert_eq!(bundles.len(), 1, "{bundles:?}");
+    let errors = page.console_errors();
+    assert_eq!(
+        errors
+            .iter()
+            .filter(|e| e.contains("refuses the bundle link"))
+            .count(),
+        4,
+        "{errors:?}"
+    );
+}
+
+// The state-table branches for attribute changes and moves.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn attribute_changes_and_moves_follow_the_state_table() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/attrs").await.expect("visit");
+    wait_state(&page, "rename", "mounted").await;
+    wait_state(&page, "badp", "error").await;
+    // A name change mounts a new instance of the new component.
+    run(
+        &page,
+        "document.getElementById('rename').setAttribute('data-leptos-island', 'Other')",
+    )
+    .await;
+    wait_for(&page, "!!document.querySelector('#rename b.other')").await;
+    assert_eq!(state(&page, "rename").await, "mounted");
+    // Good props on an island in `error` with no instance: a new mount.
+    run(
+        &page,
+        r#"document.getElementById('badp').setAttribute('data-leptos-props', '{"k":"ok"}')"#,
+    )
+    .await;
+    wait_state(&page, "badp", "mounted").await;
+    assert_eq!(text(&page, "badp").await, r#"{"k":"ok"}"#);
+    // A plain element becomes an island.
+    run(
+        &page,
+        "document.getElementById('plain').setAttribute('data-leptos-island', 'Echo')",
+    )
+    .await;
+    wait_state(&page, "plain", "mounted").await;
+    // A strategy change on a waiting island starts again.
+    assert_eq!(state(&page, "wait").await, "waiting");
+    run(
+        &page,
+        "document.getElementById('wait').removeAttribute('data-leptos-mount')",
+    )
+    .await;
+    wait_state(&page, "wait", "mounted").await;
+    // A live island that moves into an ignored region goes back to its
+    // fallback.
+    run(
+        &page,
+        "document.getElementById('zone').append(document.getElementById('mover'))",
+    )
+    .await;
+    wait_state(&page, "mover", "").await;
+    assert_eq!(text(&page, "mover").await, "fallback mover");
+    // A live island inside a new island belongs to the new island.
+    run(
+        &page,
+        "const o = document.createElement('div'); o.id = 'outer'; \
+         o.setAttribute('data-leptos-island', 'Other'); \
+         o.append(document.getElementById('wrapped')); document.body.append(o)",
+    )
+    .await;
+    wait_state(&page, "outer", "mounted").await;
+    let log = log(&page).await;
+    assert!(
+        log.contains(&"destroy:{\"k\":\"wrapped\"}".to_owned()),
+        "{log:?}"
+    );
+    assert!(
+        log.contains(&"destroy:{\"k\":\"mover\"}".to_owned()),
+        "{log:?}"
+    );
+}
+
+// AC9: without `requestIdleCallback` and `IntersectionObserver`.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn old_browsers_mount_with_fallback_triggers() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/nolazy").await.expect("visit");
+    wait_state(&page, "visible", "mounted").await;
+    wait_state(&page, "idle", "mounted").await;
+}
+
+// AC15: `after_settle` reaches an island that the same response swaps in.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn after_settle_updates_a_swapped_in_island() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/settle-page").await.expect("visit");
+    page.click("#load").await.expect("click");
+    wait_for(
+        &page,
+        "document.getElementById('s')?.textContent === '{\"k\":\"settled\"}'",
+    )
+    .await;
+    page.expect_no_console_errors()
+        .await
+        .expect("clean console");
+}
+
+// History restore: the kept fallback copy shows while the island waits.
+#[tokio::test]
+#[ignore = "requires Chromium"]
+async fn a_restored_island_gets_its_kept_fallback() {
+    let runner = start().await;
+    let page = runner.page().await.expect("page");
+    page.visit("/template").await.expect("visit");
+    wait_state(&page, "t", "waiting").await;
+    assert_eq!(text(&page, "t").await, "original fallback");
+    run(&page, "document.getElementById('t').scrollIntoView()").await;
+    wait_state(&page, "t", "mounted").await;
+    let copy: bool = eval(
+        &page,
+        "!!document.querySelector('#t > template[data-leptos-fallback]')",
+    )
+    .await;
+    assert!(copy, "the loader keeps a fallback copy");
+    assert_eq!(text(&page, "t").await, r#"{"k":"t"}"#);
 }

@@ -39,8 +39,8 @@ pub const PLUGIN_NAME: &str = env!("CARGO_PKG_NAME");
 /// ```
 ///
 /// The plugin name includes each bundle namespace and a fingerprint of its
-/// files, for example `autumn-plugin-leptos[app-islands@1a2b3c4d]`. Thus a
-/// library crate and the app can each install a `LeptosPlugin` with their
+/// files, for example `autumn-plugin-leptos[app-islands@1a2b3c4d]`.
+/// Because of this, a library crate and the app can each install a `LeptosPlugin` with their
 /// own bundles. Autumn skips a second plugin with the same bundles. Two
 /// different bundles with one namespace stop the app at start-up.
 #[derive(Debug, Default)]

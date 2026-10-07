@@ -32,12 +32,18 @@ Leptos (wasm) islands for Autumn 0.8 apps, served through the
 
 ## Rules
 
-- A change to `client/src/lib.rs` or `examples/islands-app/` needs a
-  bundle rebuild. CI checks `SOURCE.sha256`.
+- A change to `client/src/lib.rs`, `examples/islands-app/` or the root
+  `Cargo.toml` needs a bundle rebuild. CI checks `SOURCE.sha256`.
+- CI lints with stable Rust. Run `cargo +stable clippy` before a push.
 - The loader must not use `eval`, `new Function`, `innerHTML`,
   `outerHTML`, `insertAdjacentHTML` or `document.write`. It has one
   `import()`: the glue URL. `tests/loader_source.rs` checks this.
-- The loader makes no call into a crashed bundle.
+- The loader makes no call into a crashed bundle, and keeps its handles
+  alive (the glue frees a lost handle with a call into wasm).
+- The panic signal is the private callback of `autumn_leptos_start`,
+  never a DOM event.
+- The loader imports only same-origin `modulepreload` bundle links with
+  SRI hashes, outside `[data-leptos-ignore]` and islands.
 - The loader never throws out of a scan. One bad island or bundle must
   not stop the others.
 - DOM calls in the loader use prototype methods and getters, so an

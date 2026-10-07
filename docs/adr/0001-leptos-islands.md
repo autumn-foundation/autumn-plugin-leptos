@@ -38,20 +38,28 @@ flowchart LR
    with an SRI-checked `fetch` of the `.wasm`.
 3. **A versioned ABI.** The client crate exports `autumn_leptos_abi`
    (version 1), `autumn_leptos_start`, `autumn_leptos_mount` and the
-   `LeptosIsland` handle. The loader refuses other versions.
+   `AutumnLeptosIsland` handle. The loader refuses other versions.
 4. **CSR mount.** `mount_to` renders the component into the island
    element. The loader keeps the fallback nodes and puts them back at
    teardown.
 5. **Reactive props.** The component gets `Signal<P>`. `update` sets the
    signal, so the component keeps its state.
-6. **Panic guard.** A Rust panic stops the wasm instance. The client
-   panic hook sends `autumn:leptos:panic`. The loader marks the bundle as
-   crashed and puts the fallbacks back without a call into wasm.
-7. **CSP.** Only the config loader can change the CSP. An app has one
+6. **Panic guard.** A Rust panic leaves the wasm instance in an unknown
+   state. The first `register` installs a panic hook. The hook calls a
+   private callback that the loader gives to `autumn_leptos_start`. A DOM
+   event would let any script crash a bundle. The loader marks the bundle
+   as crashed, puts the fallbacks back, and keeps the handles alive (the
+   glue frees a lost handle with a call into wasm). The client refuses new
+   mounts and updates.
+7. **Link trust.** The loader imports a bundle link as code. It accepts
+   only same-origin `modulepreload` links with SRI hashes, outside
+   `[data-leptos-ignore]` and islands.
+8. **CSP.** Only the config loader can change the CSP. An app has one
    loader, so the plugin does not replace it. The app opts in with
    `WasmCspLoader`, or puts `wasm_csp()` in
-   `security.headers.content_security_policy`.
-8. **SSR fallback (`ssr` feature).** `Island::fallback_view` renders a
+   `security.headers.content_security_policy`. `WasmCspLoader` refuses
+   Autumn nonce mode: Autumn adds nonces only to its default policy.
+9. **SSR fallback (`ssr` feature).** `Island::fallback_view` renders a
    Leptos view to HTML on the server. The client replaces it at mount.
 
 ## Alternatives

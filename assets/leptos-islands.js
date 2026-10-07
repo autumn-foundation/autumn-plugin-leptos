@@ -22,6 +22,7 @@
   const ISLAND_SELECTOR = '[' + ISLAND + ']';
   const IGNORE_SELECTOR = '[' + IGNORE + ']';
   const BUNDLE_SELECTOR = 'link[' + WASM + ']';
+  const FALLBACK = 'data-leptos-fallback';
   const PREFIX = 'autumn-leptos: ';
 
   const win = window;
@@ -59,8 +60,9 @@
   const isPlainObject = (value) =>
     value !== null && typeof value === 'object' && !Array.isArray(value);
   const absolute = (url) => new URL(url, baseURI.call(document)).href;
+  const sameOrigin = (url) => new URL(url).origin === win.location.origin;
 
-  /** glue URL -> { url, state, mod, error }. */
+  /** glue URL -> { url, state, mod, error, dead }. */
   const bundles = new Map();
   /** component name -> bundle */
   const registry = new Map();
@@ -68,6 +70,8 @@
   const records = new WeakMap();
   /** Records with a handle, a pending trigger, or a pending name. */
   const live = new Set();
+  /** Bundle links that the loader refused. */
+  const refused = new WeakSet();
 
   function dispatch(target, type, detail) {
     T.dispatchEvent.call(target, new CustomEvent('autumn:leptos:' + type, { bubbles: true, detail }));
@@ -96,10 +100,25 @@
     return text === null || text === '' ? '{}' : text;
   }
 
-  // Moves the fallback nodes out of the island, into the record.
+  // Moves the fallback nodes out of the island, into the record. A copy
+  // stays in a `<template>`: an htmx history snapshot then has the
+  // fallback too.
   function takeFallback(record) {
     record.fallback = Array.from(childNodes.call(record.el));
-    E.replaceChildren.call(record.el);
+    const copy = D.createElement.call(document, 'template');
+    setAttr(copy, FALLBACK, '');
+    for (const node of record.fallback) copy.content.append(N.cloneNode.call(node, true));
+    E.replaceChildren.call(record.el, copy);
+  }
+
+  // Puts back the fallback of a restored snapshot: the kept copy, or
+  // nothing.
+  function restoreSnapshot(el) {
+    const copy = Array.from(childNodes.call(el)).find(
+      (node) => isElement(node) && matches(node, 'template[' + FALLBACK + ']'),
+    );
+    if (copy) E.replaceChildren.apply(el, Array.from(copy.content.childNodes));
+    else E.replaceChildren.call(el);
   }
 
   // Puts the fallback back. It also removes other children.
@@ -128,7 +147,15 @@
       handle = bundle.mod.autumn_leptos_mount(record.name, record.el, propsText(record));
     } catch (error) {
       restoreFallback(record);
-      fail(record, 'did not mount:', error);
+      fail(record, 'did not mount:', bundle.state === 'crashed' ? bundle.error : error);
+      return;
+    }
+    // A nested call can panic, and JavaScript can catch the trap. Then the
+    // mount returns, but the bundle crashed.
+    if (bundle.state === 'crashed') {
+      bundle.dead.push(handle);
+      restoreFallback(record);
+      fail(record, 'did not mount:', bundle.error);
       return;
     }
     record.handle = handle;
@@ -142,22 +169,48 @@
     try {
       handle.update(propsText(record));
     } catch (error) {
+      // A panic in the update: `crash` did the work.
+      if (record.handle !== handle) return;
       fail(record, 'has bad props:', error);
       return;
     }
+    if (record.handle !== handle) return;
     setState(record, 'mounted');
     // Leptos changes the DOM in a microtask. Send the event after it.
     setTimeout(() => {
-      if (record.handle === handle) emit(record, 'update');
+      if (record.handle === handle && record.state === 'mounted') emit(record, 'update');
     }, 0);
+  }
+
+  function loading() {
+    for (const bundle of bundles.values()) {
+      if (bundle.state === 'loading') return true;
+    }
+    return false;
+  }
+
+  function missing(record) {
+    record.missing = true;
+    const error = new Error('no loaded bundle registers "' + record.name + '"');
+    fail(record, 'did not mount:', error);
   }
 
   function activate(record) {
     record.cancel = null;
+    record.missing = false;
     const bundle = registry.get(record.name);
-    if (!bundle) setState(record, 'pending');
-    else if (bundle.state === 'crashed') fail(record, 'did not mount: its bundle crashed', bundle.error);
-    else mount(record, bundle);
+    if (bundle && bundle.state === 'crashed') fail(record, 'did not mount:', bundle.error);
+    else if (bundle) mount(record, bundle);
+    else if (loading()) setState(record, 'pending');
+    else missing(record);
+  }
+
+  // After the last bundle loads, a pending name is a missing name.
+  function settle() {
+    if (loading()) return;
+    for (const record of Array.from(live)) {
+      if (record.state === 'pending') missing(record);
+    }
   }
 
   let visibility = null;
@@ -217,14 +270,17 @@
     }
   }
 
-  // A panic stops the wasm instance. Put back the fallback of each island
-  // of the bundle. Make no call into the bundle.
+  // A panic leaves the wasm instance in an unknown state. Put back the
+  // fallback of each island of the bundle. Make no call into the bundle.
   function crash(bundle, message) {
-    if (!bundle || bundle.state !== 'ready') return;
+    if (bundle.state !== 'ready') return;
     bundle.state = 'crashed';
     bundle.error = new Error('the wasm bundle panicked: ' + message);
     for (const record of Array.from(live)) {
       if (record.bundle !== bundle || !record.handle) continue;
+      // Keep the handle alive: the glue frees a lost handle with a call
+      // into wasm.
+      bundle.dead.push(record.handle);
       record.handle = null;
       restoreFallback(record);
       fail(record, 'crashed:', bundle.error);
@@ -236,7 +292,8 @@
     if (readyState.call(document) === 'loading') return;
     if (!connected(el) || records.has(el) || skipped(el)) return;
     // htmx history restore brings back old Leptos output, not a fallback.
-    if (getAttr(el, STATE) === 'mounted') E.replaceChildren.call(el);
+    const restored = getAttr(el, STATE);
+    if (restored === 'mounted' || restored === 'error') restoreSnapshot(el);
     // A live island inside a new island belongs to the new island now.
     for (const record of Array.from(live)) {
       if (record.el !== el && contains(el, record.el)) teardown(record);
@@ -249,6 +306,7 @@
       bundle: null,
       cancel: null,
       fallback: null,
+      missing: false,
     };
     records.set(el, record);
     live.add(record);
@@ -279,6 +337,7 @@
     bundle.error = error;
     console.error(PREFIX + 'bundle ' + bundle.url + ' did not load:', error);
     dispatch(document, 'error', { name: null, element: null, bundle: bundle.url, error });
+    settle();
   }
 
   // Registers the names of a loaded bundle. Mounts the waiting islands.
@@ -289,7 +348,9 @@
           'autumn-plugin-leptos and autumn-plugin-leptos-client',
       );
     }
-    const names = mod.autumn_leptos_start(bundle.url);
+    // Only this bundle can call the panic callback. A DOM event would let
+    // any script crash a bundle.
+    const names = mod.autumn_leptos_start((message) => crash(bundle, message));
     if (!Array.isArray(names)) throw new TypeError('autumn_leptos_start must return names');
     bundle.mod = mod;
     bundle.state = 'ready';
@@ -304,30 +365,50 @@
       added.add(name);
     }
     for (const record of Array.from(live)) {
-      if (record.state === 'pending' && added.has(record.name)) activate(record);
+      const waits = record.state === 'pending' || record.missing;
+      if (waits && added.has(record.name)) activate(record);
     }
+    settle();
+  }
+
+  // Returns the reason to refuse a bundle link, or `null`. The loader
+  // imports a link as code, so it accepts only links from `leptos_bundle`:
+  // same origin, `modulepreload`, SRI for the glue and the wasm, and not
+  // in an ignored region or an island.
+  function refusal(link, url, wasm) {
+    if ((getAttr(link, 'rel') || '').toLowerCase() !== 'modulepreload') return 'rel is not modulepreload';
+    if (!getAttr(link, 'integrity') || !getAttr(link, WASM_INTEGRITY)) return 'it has no SRI hash';
+    if (!sameOrigin(url) || !sameOrigin(wasm)) return 'it is not same-origin';
+    if (closest(link, IGNORE_SELECTOR) || closest(link, ISLAND_SELECTOR)) return 'it is in an ignored region';
+    return null;
   }
 
   // Imports the glue module and starts it with an SRI-checked wasm fetch.
   function load(link) {
-    const href = getAttr(link, 'href');
-    const wasm = getAttr(link, WASM);
-    if (!href || !wasm) return;
+    if (refused.has(link)) return;
     let url;
+    let wasm;
     try {
-      url = absolute(href);
+      url = absolute(getAttr(link, 'href') || '');
+      wasm = absolute(getAttr(link, WASM) || '');
     } catch (error) {
+      url = null;
+    }
+    const reason = url ? refusal(link, url, wasm) : 'its URL is not valid';
+    if (reason) {
+      refused.add(link);
+      console.error(PREFIX + 'refuses the bundle link (' + reason + ')', link);
       return;
     }
     if (bundles.has(url)) return;
-    const bundle = { url, state: 'loading', mod: null, error: null };
+    const bundle = { url, state: 'loading', mod: null, error: null, dead: [] };
     bundles.set(url, bundle);
-    const integrity = getAttr(link, WASM_INTEGRITY);
+    const wasmIntegrity = getAttr(link, WASM_INTEGRITY);
     const options = { credentials: 'same-origin' };
-    if (integrity) options.integrity = integrity;
+    options.integrity = wasmIntegrity;
     import(bundle.url)
       .then((mod) => {
-        const response = fetch(absolute(wasm), options);
+        const response = fetch(wasm, options);
         return Promise.resolve(mod.default({ module_or_path: response })).then(() => mod);
       })
       .then((mod) => ready(bundle, mod))
@@ -432,13 +513,6 @@
     const detail = event.detail;
     const changes = detail && Array.isArray(detail.value) ? detail.value : [detail];
     for (const change of changes) applyProps(change, event.target);
-  });
-
-  // The client panic hook sends this event before the wasm instance stops.
-  on(document, 'autumn:leptos:panic', (event) => {
-    const detail = event.detail;
-    if (!detail || typeof detail.bundle !== 'string') return;
-    crash(bundles.get(detail.bundle), detail.message);
   });
 
   win.autumnLeptos = {

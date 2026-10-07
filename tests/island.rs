@@ -215,6 +215,20 @@ fn a_repeated_attribute_keeps_the_last_value() {
 }
 
 #[test]
+fn attribute_names_match_in_any_case() {
+    // HTML names are not case-sensitive. A browser keeps the first one.
+    let island = Island::new("X")
+        .attr("Role", "a")
+        .expect("attr")
+        .attr("role", "b")
+        .expect("attr");
+    assert_eq!(
+        render(&island),
+        r#"<div data-leptos-island="X" role="b"></div>"#
+    );
+}
+
+#[test]
 fn bad_attribute_names_are_refused() {
     for name in ["", "a b", "a\"b", "a>b", "1a", "-a", "é"] {
         let error = Island::new("X").attr(name, "v").expect_err(name);
@@ -232,6 +246,11 @@ fn bad_attribute_names_are_refused() {
         "DATA-LEPTOS-STATE",
         "onclick",
         "onLoad",
+        "hx-on:click",
+        "hx-on::after-request",
+        "HX-ON-CLICK",
+        "data-hx-on:click",
+        "data-hx-on-click",
     ] {
         let error = Island::new("X").attr(name, "v").expect_err(name);
         assert!(matches!(error, AttrError::Reserved(_)), "{name}: {error:?}");
