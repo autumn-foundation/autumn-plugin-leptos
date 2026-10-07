@@ -1,0 +1,88 @@
+[workspace]
+members = [".", "client"]
+# The example wasm crate builds only for `wasm32-unknown-unknown`. It is
+# its own workspace root.
+exclude = ["examples/islands-app"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"
+license = "Apache-2.0"
+repository = "https://github.com/autumn-foundation/autumn-plugin-leptos"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+module_name_repetitions = "allow"
+redundant_pub_crate = "allow"
+
+[package]
+name = "autumn-plugin-leptos"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Autumn plugin: Leptos (wasm) islands in Maud + htmx pages."
+readme = "README.md"
+keywords = ["autumn", "leptos", "wasm", "islands", "htmx"]
+categories = ["web-programming", "wasm"]
+exclude = [
+    # The demo, its wasm bundle and its source are not in the published crate.
+    "examples/",
+    ".github/",
+    "docs/",
+    "client/",
+    # These tests read files outside the published crate.
+    "tests/browser.rs",
+    "tests/e2e.rs",
+    "tests/loader_source.rs",
+    "tests/fixtures/",
+    "CLAUDE.md",
+    "clippy.toml",
+]
+
+[features]
+# Render a Leptos view on the server as the island fallback.
+ssr = ["dep:leptos", "leptos/ssr"]
+
+[dependencies]
+# No default features: the host app selects the Autumn features.
+autumn-web = { version = "0.8", default-features = false, features = ["maud"] }
+leptos = { version = "0.8", default-features = false, optional = true }
+# `html!` expands to `maud::` paths, so this crate needs `maud` by name.
+maud = "0.27"
+serde = "1"
+serde_json = "1"
+thiserror = "2"
+
+[dev-dependencies]
+autumn-web = { version = "0.8", default-features = false, features = ["maud", "htmx", "system-tests"] }
+base64 = "0.22"
+proptest = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["raw_value"] }
+sha2 = "0.10"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "net"] }
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lints]
+workspace = true
+
+[[example]]
+name = "leptos_demo"
+required-features = ["ssr"]
+# `cargo test` also runs the smoke tests in the example.
+test = true

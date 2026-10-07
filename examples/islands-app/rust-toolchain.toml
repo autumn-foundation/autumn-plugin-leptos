@@ -1,0 +1,4 @@
+# A fixed toolchain gives the same wasm bytes on each machine.
+[toolchain]
+channel = "1.97.0"
+targets = ["wasm32-unknown-unknown"]

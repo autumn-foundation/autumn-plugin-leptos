@@ -1,0 +1,35 @@
+[package]
+name = "autumn-plugin-leptos-client"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Wasm side of autumn-plugin-leptos: register Leptos islands."
+readme = "README.md"
+keywords = ["autumn", "leptos", "wasm", "islands", "htmx"]
+categories = ["web-programming", "wasm"]
+
+[dependencies]
+# The app selects the Leptos features (`csr`).
+leptos = { version = "0.8", default-features = false }
+serde = "1"
+serde_json = "1"
+thiserror = "2"
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = [
+    "console",
+    "CustomEvent",
+    "CustomEventInit",
+    "Document",
+    "EventTarget",
+    "HtmlElement",
+    "Window",
+] }
+
+[dev-dependencies]
+serde = { version = "1", features = ["derive"] }
+
+[lints]
+workspace = true

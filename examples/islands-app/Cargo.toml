@@ -1,0 +1,27 @@
+# The demo islands: real Leptos components, built to wasm. Build with
+# `./build.sh`. It writes `../islands/`.
+[package]
+name = "leptos-demo-islands"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Own workspace root: this crate builds only for `wasm32-unknown-unknown`.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+autumn-plugin-leptos-client = { path = "../../client" }
+leptos = { version = "0.8", features = ["csr"] }
+serde = { version = "1", features = ["derive"] }
+# Keep equal to the `wasm-bindgen-cli` version in `build.sh`.
+wasm-bindgen = "=0.2.129"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
