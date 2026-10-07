@@ -1,0 +1,5 @@
+# Tests may use `unwrap`, `expect` and `panic`.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+doc-valid-idents = ["htmx", "Maud", "JavaScript", "WebAssembly", "Leptos", ".."]
