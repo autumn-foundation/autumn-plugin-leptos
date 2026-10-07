@@ -199,14 +199,16 @@ async fn autumn_sends_the_wasm_policy_from_config() {
 struct Fixed(String);
 
 impl autumn_web::config::ConfigLoader for Fixed {
-    async fn load(&self) -> Result<AutumnConfig, autumn_web::config::ConfigError> {
+    fn load(
+        &self,
+    ) -> impl Future<Output = Result<AutumnConfig, autumn_web::config::ConfigError>> + Send {
         let mut config = AutumnConfig::default();
         config
             .security
             .headers
             .content_security_policy
             .clone_from(&self.0);
-        Ok(config)
+        std::future::ready(Ok(config))
     }
 }
 

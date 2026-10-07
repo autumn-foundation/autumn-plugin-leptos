@@ -27,7 +27,7 @@ fn abi_version_is_one() {
 
 #[test]
 fn register_adds_names_in_sorted_order() {
-    assert!(names().is_empty());
+    assert_eq!(names(), Vec::<String>::new());
     assert!(register("Counter", counter));
     assert!(register("Alpha", |_: Signal<Props>| view! { <i /> }));
     assert_eq!(names(), ["Alpha", "Counter"]);
@@ -43,7 +43,7 @@ fn the_first_registration_of_a_name_stays() {
 #[test]
 fn an_empty_name_is_refused() {
     assert!(!register("", counter));
-    assert!(names().is_empty());
+    assert_eq!(names(), Vec::<String>::new());
 }
 
 #[test]
