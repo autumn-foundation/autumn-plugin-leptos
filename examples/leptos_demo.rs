@@ -43,13 +43,15 @@ static ISLANDS: PluginAssets = PluginAssets::from_files(
 
 #[autumn_web::main]
 async fn main() {
-    autumn_web::app()
-        // The Autumn CSP plus `'wasm-unsafe-eval'`.
-        .with_config_loader(WasmCspLoader::default())
-        .plugin(plugin())
-        .routes(routes())
-        .run()
-        .await;
+    Box::pin(
+        autumn_web::app()
+            // The Autumn CSP plus `'wasm-unsafe-eval'`.
+            .with_config_loader(WasmCspLoader::default())
+            .plugin(plugin())
+            .routes(routes())
+            .run(),
+    )
+    .await;
 }
 
 /// The plugin with the demo bundle.

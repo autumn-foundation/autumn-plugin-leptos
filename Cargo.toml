@@ -58,7 +58,7 @@ ssr = ["dep:leptos", "leptos/ssr"]
 
 [dependencies]
 # No default features: the host app selects the Autumn features.
-autumn-web = { version = "0.8", default-features = false, features = ["maud"] }
+autumn-web = { version = "0.9", default-features = false, features = ["maud"] }
 leptos = { version = "0.8", default-features = false, optional = true }
 # `html!` expands to `maud::` paths, so this crate needs `maud` by name.
 maud = "0.27"
@@ -67,7 +67,7 @@ serde_json = "1"
 thiserror = "2"
 
 [dev-dependencies]
-autumn-web = { version = "0.8", default-features = false, features = ["maud", "htmx", "system-tests"] }
+autumn-web = { version = "0.9", default-features = false, features = ["maud", "htmx", "system-tests"] }
 base64 = "0.22"
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
