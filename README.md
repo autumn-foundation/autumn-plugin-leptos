@@ -23,7 +23,7 @@ The server crate:
 
 ```toml
 [dependencies]
-autumn-plugin-leptos = { version = "0.1", features = ["ssr"] }
+autumn-plugin-leptos = { version = "0.2", features = ["ssr"] }
 autumn-web = "0.9"
 leptos = "0.8"          # for `fallback_view` and the shared components
 serde = { version = "1", features = ["derive"] }
