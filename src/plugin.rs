@@ -126,7 +126,7 @@ impl Plugin for LeptosPlugin {
         Some(
             PluginContract::new(PLUGIN_NAME)
                 .plugin_version(env!("CARGO_PKG_VERSION"))
-                .autumn_web("0.8"),
+                .autumn_web("0.9"),
         )
     }
 

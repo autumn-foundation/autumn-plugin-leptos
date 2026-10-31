@@ -2,7 +2,7 @@
 
 ## 0.1.0 (unreleased)
 
-First release. Targets `autumn-web` 0.8 and Leptos 0.8.
+First release. Targets `autumn-web` 0.9 and Leptos 0.8.
 
 ### Added
 
