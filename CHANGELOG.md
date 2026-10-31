@@ -1,8 +1,15 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.2.0 — 2026-10-31
 
-First release. Targets `autumn-web` 0.9 and Leptos 0.8.
+### Changed
+
+- **Breaking:** Support `autumn-web` 0.9. The plugin now needs `autumn-web`
+  0.9. Apps on `autumn-web` 0.8 stay on 0.1.
+
+## 0.1.0 — 2026-10-07
+
+First release. Targets `autumn-web` 0.8 and Leptos 0.8.
 
 ### Added
 
