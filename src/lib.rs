@@ -86,3 +86,8 @@ pub use island::{AttrError, Island, JsonKind, MountWhen, PropsError};
 pub use plugin::{LeptosPlugin, PLUGIN_NAME};
 pub use tags::{leptos_bundle, leptos_script};
 pub use update::{PROPS_EVENT, PropsUpdate};
+
+/// Compiles the Rust snippets of the README as doctests.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;

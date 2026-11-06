@@ -32,6 +32,8 @@ Leptos (wasm) islands for Autumn 0.10 apps, served through the
 
 ## Rules
 
+- README Rust snippets are doctests. Make them compile; use `no_run`, not `ignore`.
+  `tests/doc_snippets.rs` checks the TOML snippets and the version pins in the docs.
 - A change to `client/src/lib.rs`, `examples/islands-app/` or the root
   `Cargo.toml` needs a bundle rebuild. CI checks `SOURCE.sha256`.
 - CI lints with stable Rust. Run `cargo +stable clippy` before a push.
