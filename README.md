@@ -53,13 +53,12 @@ cargo install wasm-bindgen-cli --version 0.2.129
 ### 1. Write and register the components
 
 ```rust,ignore
-// islands/src/lib.rs
-use autumn_plugin_leptos_client::register;
+// From `examples/islands-app/src/components.rs`, `examples/islands-app/src/lib.rs`.
+// components.rs
 use leptos::prelude::*;
 use serde::{Deserialize, Serialize};
-use wasm_bindgen::prelude::*;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CounterData {
     pub start: i32,
     pub label: String,
@@ -68,14 +67,25 @@ pub struct CounterData {
 pub fn counter(props: Signal<CounterData>) -> impl IntoView {
     let (count, set_count) = signal(props.get_untracked().start);
     view! {
-        <span>{move || props.get().label} ": " {count}</span>
-        <button on:click=move |_| set_count.update(|n| *n += 1)>"+1"</button>
+        <div class="counter">
+            <span class="label">{move || props.get().label}</span>
+            ": "
+            <output>{count}</output>
+            " "
+            <button type="button" on:click=move |_| set_count.update(|n| *n += 1)>"+1"</button>
+        </div>
     }
 }
 
+// lib.rs
+mod components;
+
+use autumn_plugin_leptos_client::register;
+use wasm_bindgen::prelude::*;
+
 #[wasm_bindgen(start)]
 pub fn start() {
-    register("Counter", counter);
+    register("Counter", components::counter);
 }
 ```
 
@@ -101,7 +111,7 @@ complete script.
 
 ### 3. Install the plugin and render islands
 
-```rust,ignore
+```rust,no_run
 use autumn_plugin_leptos::{Island, LeptosPlugin, WasmCspLoader, leptos_bundle, leptos_script};
 use autumn_web::assets::{PluginAssets, asset_url};
 use autumn_web::prelude::*;
@@ -109,8 +119,9 @@ use autumn_web::prelude::*;
 static ISLANDS: PluginAssets = PluginAssets::from_files(
     "app-islands",
     &[
-        ("islands.js", include_bytes!("../static/islands/islands.js")),
-        ("islands_bg.wasm", include_bytes!("../static/islands/islands_bg.wasm")),
+        // The demo bundle of this repository. Use the output of your own build.
+        ("islands.js", include_bytes!("../examples/islands/leptos_demo_islands.js")),
+        ("islands_bg.wasm", include_bytes!("../examples/islands/leptos_demo_islands_bg.wasm")),
     ],
 );
 
@@ -176,8 +187,9 @@ Without the token, the islands keep their fallback.
 
 ### 5. Send new props from the server
 
-```rust,ignore
+```rust,no_run
 use autumn_plugin_leptos::PropsUpdate;
+use autumn_web::prelude::*;
 
 #[post("/rename")]
 async fn rename() -> AutumnResult<(PropsUpdate, Markup)> {
@@ -209,9 +221,10 @@ island.dispatchEvent(new CustomEvent("autumn:leptos:props", {
 ### 6. Render the fallback on the server (`ssr`)
 
 ```rust,ignore
+// From `examples/leptos_demo.rs`.
 let counter = Island::new("Counter")
     .props(&data)?
-    .fallback_view(move || counter(Signal::stored(data)));
+    .fallback_view(move || components::counter(Signal::stored(data)));
 ```
 
 - Share the component file between the server and the wasm crate. The
