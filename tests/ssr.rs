@@ -2,6 +2,9 @@
 
 #![cfg(feature = "ssr")]
 #![allow(clippy::expect_used, clippy::panic)]
+// The `#[component]` macro emits an empty enum. Clippy 1.100 flags it.
+// Older Clippy releases do not know the lint.
+#![allow(unknown_lints, clippy::empty_enums)]
 
 use autumn_plugin_leptos::Island;
 use leptos::prelude::*;
